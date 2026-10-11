@@ -19,6 +19,7 @@
 | [`02-foundations.md`](02-foundations.md) | The five foundations and where each one is built |
 | [`03-explain-loop.md`](03-explain-loop.md) | The retention mechanism: weekly cold recall, monthly walkthrough, the prediction ledger |
 | [`04-inference-engine-pivot.md`](04-inference-engine-pivot.md) | **Decision record (v4).** Domain pivot, component mapping, scheduler decisions, repo mechanics |
+| [`05-final-form.md`](05-final-form.md) | **Target document.** The finished project's claim set, each row traced to the artifact that earns it and the doc that commits to it; what it never claims; the definition of done |
 | [`10-phase-0-reading.md`](10-phase-0-reading.md) | OSTEP/CiA execution order, Drepper, supplements, harness, false-sharing toy, SPSC ring capstone |
 | [`11-phase-1-core.md`](11-phase-1-core.md) | Admission-control core, circuit breaker, accounting ledger, fuzz/TSan/differential/replay gate |
 | [`12-phase-2-microarch.md`](12-phase-2-microarch.md) | Cache/topology experiments, branchless, huge pages, NUMA cloud day |
@@ -116,10 +117,11 @@ The **Quant Anchors** run alongside: H→B→C→D are small items on Orderbook 
 2. **Second backend (ONNX Runtime) — cut before any core item**; the decoder backend alone carries the story
 3. Half of Phase 2's experiments (keep NUMA + false sharing; branchless and huge pages are the cut candidates)
 4. Phase 6 rung 2 (chunked prefill) — the scheduler ships at rung 1 with the ladder documented and rung 2 named as designed-but-unbuilt
-5. Phase 6 preemption rungs (recompute/swap)
-6. Load-generator realism (keep one recorded stream + one synthetic flavor)
-7. Snapshot-recovery stretch (already demoted)
-8. Step G's stretch items (sampling variants, GPU path) — and cut A5 (the quantized kernel) before cutting the GEMM ladder
+5. **Phase 6 rung 2b (prefix caching, added 2026-10-10)** — survives compression a little longer than chunked prefill because it is cheaper and it is the more common production feature; the shared-prefix load-generator flavor is cut with it, since without that workload the rung is unmeasurable
+6. Phase 6 preemption rungs (recompute/swap)
+7. Load-generator realism (keep one recorded stream + one synthetic flavor)
+8. Snapshot-recovery stretch (already demoted)
+9. Step G's stretch items (sampling variants, GPU path); then the step-A **Triton comparison** (added 2026-10-10); then cut A5 (the quantized kernel). The GEMM ladder is never cut — the roofline it produces is what the decoder's bandwidth claim rests on
 
 The decoder itself is no longer cuttable: it is the scheduler's backend, and phase 6 has nothing to serve without it.
 

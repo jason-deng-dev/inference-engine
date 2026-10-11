@@ -46,16 +46,15 @@ Run against the repos on this machine by grepping the code each claim names. **S
 
 | Claim | Status | Evidence |
 | --- | --- | --- |
-| p50 add 142ns, cancel 125ns, 3-level sweep 357ns | **shipped** | `README.md` results table and `docs/benchmark/build 1/benchmark_results.md`, Google Benchmark `repeats:100` |
-| Array-indexed price ladder, O(1) best-quote, zero hot-path allocations | **target** | the book is `std::map<int, OrdersAtPrice>` — `include/orderbook.h:24-25` |
-| `3.9×`, `1.18M → 4.55M msgs/sec` | **target** | no such numbers anywhere in the repo |
-| Generational slot map for the order-ID index | **target** | the order index is `std::map<int, Order>` — `include/orders.h:33` |
+| p50 add 142ns, cancel 125ns, 3-level sweep 357ns | **stale — re-measure** | Those numbers exist only in `docs/prototype/benchmark/benchmark_results.md` (`BM_BuyEmptyBook` et al.) — the **pre-rewrite prototype**, measured through the old `Orderbook`/`Trader` API, which is different code from today's book. There is no `docs/benchmark/` at the repo root; the README's results table is empty pending the harness; and `benchmarks/main.cpp` is fully commented out, so `orderbook_bench` builds an empty binary. Do not ship this row. The replacement comes from the `Orderbook_Vector` vs `Orderbook_Pool` replay comparison (corrected 2026-10-10) |
+| Pooled intrusive FIFO per level, O(1) best-quote, zero hot-path allocations | **target** | levels are a searchable vector in `orderbook_vector.h`; orders are `std::list<Order>` nodes; zero `pmr`/`intrusive`/pool hits. Ladder dropped 2026-10-10 (would be a fourth container rewrite — cap at [`40-deepening-queue.md`](40-deepening-queue.md)) |
+| Generational slot map for the order-ID index | **target** | `idMap` is `std::unordered_map<OrderId, std::list<Order>::iterator>` — `orderbook_vector.h:39` |
 | PMR-pooled intrusive FIFO per level | **target** | zero `pmr`/`intrusive`/pool hits |
 | OFI / microprice / queue-position feature layer | **target** | zero `microprice`/`imbalance`/`queuePosition` hits |
 | AF_XDP kernel-bypass ingestion | **target** | zero `xdp`/`af_xdp` hits; the spec and its rung ladder are [`41-network-ingestion.md`](41-network-ingestion.md) |
 | Wire-to-wire, hardware-timestamped latency | **target** | no `SO_TIMESTAMPING`/PHC code; NIC capability unverified (`ethtool -T` is step 0) |
 | Parsed NASDAQ ITCH 5.0 message mix | **target** | zero `itch`/`moldudp` hits; the feed is modelled, not parsed |
-| Linear-vs-binary-vs-branchless search comparison | **target** | planned in `Orderbook/docs/specs.md`; `orderbook_vector.h` uses `std::lower_bound` today |
+| Linear-vs-binary-vs-branchless search comparison | **implementation shipped, comparison still target** | `include/search_policies.h` ships all three; `orderbook_vector.h` is templated on the policy; `tests/search_policies_test.cc` passes (58 of the 123 in the suite). Only the head-to-head *comparison* is missing, and it is gated on the replay harness, not on the implementation (corrected 2026-10-10) |
 
 ### Inference engine (v4 pivot, adopted 2026-10-09)
 
@@ -71,7 +70,7 @@ Run against the repos on this machine by grepping the code each claim names. **S
 
 The Orderbook block currently ships one defensible bullet of four, and the GPU bullet ships none. Appendix A is a TARGET document and rule 1 covers `[N]` placeholders — but it does not cover an *unbracketed* assertion. `Cacheline-aligned, NUMA-pinned hot path` has no bracket, no number, and no code, and it reads as shipped. Extend rule 1: **an unbracketed assertion needs code behind it, not just a bracketed number.**
 
-Separately: `Orderbook/README.md` titles the project `C++23` while `CMakeLists.txt` sets `CMAKE_CXX_STANDARD 17`. The resume says C++17, which matches the build — fix the README, not the resume.
+Separately, the C++ version claim has **inverted** since this was written (corrected 2026-10-10): `Orderbook/CMakeLists.txt:4` now sets `CMAKE_CXX_STANDARD 23`, so the README's `C++23` is correct and the resume's `C++17` is the stale side — the opposite of the note above. Fix the resume. The lesson matches the one this audit exists for: both claims were checked against a snapshot and neither was re-checked. **An audit that is not re-run is an assertion.**
 
 The pipeline lead-in under **Projects** is itself one of these unbracketed assertions: it names four steps and all four are targets. It ships when the first link ships — step H, the Orderbook feature layer — not before.
 
@@ -98,21 +97,24 @@ B.Sc. (Honours), Economics, Minor in Computer Science & Mathematics — Universi
 
 *Three systems, one standard: a matching engine, a statistical simulation engine, and a low-latency serving engine — nanosecond-scale latency measured with controls, determinism verified bit-for-bit.*
 
-**Order Book Matching Engine — C++17** (github.com/jason-deng-dev/Orderbook)
+**Order Book Matching Engine — C++23** (github.com/jason-deng-dev/Orderbook)
 
-- Array-indexed price ladder with PMR-pooled intrusive FIFO queues per level (price-time priority): O(1) best-quote access and insert/cancel-by-ID; zero hot-path allocations.
-- Replaced std::map prototype with the flat ladder (3.9× throughput, 1.18M → 4.55M msgs/sec) and the order index with a generational slot map (cancel p50 [125→N]ns) — fills bit-identical across rewrites on the 1M-message replay.
-- Benchmarked 12 op paths (Google Benchmark): p50 add 142ns, cancel 125ns, 3-level sweep 357ns; p99 within ~3% of p50.
-- Zero-alloc feature layer (order-flow imbalance, microprice, queue-position estimate) at [X] msgs/sec, feeding the backtester's signal inputs.
-- Replaced the loopback feed with an AF_XDP user-space data path at rung [R]: kernel-stack cycles per message [A]→[B] (perf-verified), syscalls per message [N]→0, wire-to-book p99.9 [C]ns against NIC hardware timestamps; fills bit-identical to the socket path on the same recorded stream.
+- **Low-Latency Core:** Price-time priority matching engine in C++23 with self-trade prevention and partial-fill semantics; reverse-ordered contiguous price levels, best price at the back so book updates never shift the container, with the search policy as a compile-time template parameter.
+- **Replay & Validation:** Implemented ITCH 5.0 ingestion with sequence-gap detection and a Synced/Recovering resync state machine, and a post-match apply path (execute/cancel/replace against resting orders) decoupled from the order-entry matching path.
+- **Data Structure Optimization:** Replaced the std::map prototype with a reverse-ordered level vector (**[X]×** throughput on the [N]M-message replay) and the order index with a generational slot map (cancel p50: **[A→B]**ns); fills bit-identical across rewrites. Pooled slab with intrusive FIFO links removes the per-order heap node.
+- **Hot-Path Optimization:** Zero hot-path allocation via a pre-committed slab arena and a hand-rolled free-list, verified by interposing malloc/free and operator new/delete rather than by inspection; tail latency attributed with per-op LLC and dTLB miss counts. Benchmarked 3 search strategies on the same replay, located the depth **[D]** crossover where linear search wins on hardware prefetching, confirmed against `perf stat` branch-miss and IPC counters.
+- **Correctness:** Replays one capture through every backend and asserts identical book-state hashes plus continuous invariants (uncrossed book, per-level volume conservation, order-index consistency), catching **[C]** divergences the unit suite missed.
+- **ML Feature Integration:** Zero-alloc microstructure feature layer (order-flow imbalance, microprice, queue-position estimate) in the hot path at **[X]** msgs/sec, feeding the backtester's signal inputs. *— gated on step H; do not ship until it exists.*
+- **Kernel-Bypass Ingestion:** Replaced the socket feed with an AF_XDP user-space data path at rung [R]: kernel-stack cycles per message [A]→[B] (perf-verified), syscalls per message [N]→0, wire-to-book p99.9 [C]ns against NIC hardware timestamps; fills bit-identical to the socket path on the same recorded stream. *— rungs 0–1 need no special hardware; rungs 2–3 pause first.*
 
 **Backtesting + Monte Carlo Engine — C++17** (github.com/jason-deng-dev/Backtester)
 
-- C++17 backtester with orthogonal Signal/Sizing/Risk components and zero-alloc CSV ingest; FIFO lot accounting with per-position statistics and equity-curve analytics (Sharpe, max drawdown, CAGR).
-- Validated edge with trade-level Monte Carlo (CIs on EV, drawdown, terminal equity), Markov regime switching, and null ensembles separating signal from luck.
-- GPU Monte Carlo at [N]× the 16-thread CPU path (CUDA, cloud T4), seeded replay bit-identical across CPU and GPU.
-- Parallelized across [C] cores by index-partitioned writes with per-run seeding: serial and parallel samplers agree bit-for-bit under test, [S]× speedup on [C] cores.
-- Model pipeline: leakage-free point-in-time datasets stored as memory-mapped Parquet, handed to PyTorch zero-copy through the Arrow C Data Interface → ONNX export → walk-forward evaluation with null-ensemble validation.
+- **Orthogonal Architecture:** Strategy logic factored into Signal, Sizing, and Risk axes composed at runtime; zero-allocation CSV ingest via `std::from_chars`; FIFO lot accounting with per-position analytics (Sharpe, max drawdown, CAGR).
+- **Execution Realism:** Depth-aware fills that consume visible book depth with slippage as a first-class output, plus TWAP child-order slicing — the simulator prices its own execution instead of assuming a fill.
+- **Streaming Ingest:** SPSC ring as bar producer with the strategy loop as consumer, replacing the blocking full-file load; the Monte Carlo sampler stays index-partitioned parallel-for rather than queued, because a queue buys nothing where every path costs the same and writes one slot.
+- **Statistical Rigor & Regime Awareness:** Trade-level Monte Carlo with percentile distributions over EV, max drawdown, and terminal equity; two-state regime classification with a fitted transition matrix for non-stationary dynamics; null-ensemble baselines separating signal from luck.
+- **Parallel & GPU Execution:** Index-partitioned writes with per-run seeding across **[C]** cores — serial and parallel samplers agree bit-for-bit under test, **[S]×** speedup; path generation ported to CUDA (cloud T4) at **[N]×** the 16-thread CPU path with seeded replay bit-identical across CPU and GPU.
+- **ML Data Pipeline:** Leakage-free point-in-time datasets stored as memory-mapped Parquet, handed to PyTorch zero-copy through the Arrow C Data Interface → ONNX export → walk-forward evaluation with null-ensemble validation.
 
 **Low-Latency Inference Engine — C++17** (repo) — *framed for this page as systems evidence; the serving-layer bullets live in Appendix B*
 
@@ -161,18 +163,22 @@ Skills: C++17/20 · CUDA · Python/PyTorch · ONNX Runtime · Linux (perf, NUMA,
 
 **Backtesting + Monte Carlo Engine — C++17** (github.com/jason-deng-dev/Backtester)
 
-- GPU-accelerated Monte Carlo (CUDA): [N]× path throughput vs. CPU, bit-identical seeded replay across CPU/GPU, Nsight-profiled on cloud T4.
-- End-to-end ML pipeline: leakage-free point-in-time datasets stored as memory-mapped Parquet and handed to PyTorch zero-copy through the Arrow C Data Interface → ONNX export → walk-forward evaluation with null-ensemble validation.
-- Parallelized across [C] cores by index-partitioned writes with per-run seeding: serial and parallel samplers agree bit-for-bit under test, [S]× speedup on [C] cores.
-- C++17 simulation engine: zero-alloc CSV ingest, pluggable strategy components, lot-level accounting with per-position statistics.
+- **Orthogonal Architecture:** Signal / Sizing / Risk axes composed at runtime; zero-alloc CSV ingest via `std::from_chars`; FIFO lot accounting with per-position statistics (Sharpe, max drawdown, CAGR, annualized volatility).
+- **Execution Realism:** Depth-aware fills consuming visible book depth, slippage as a first-class output, TWAP child-order slicing — execution is priced by the simulator rather than assumed.
+- **Streaming Ingest:** SPSC ring as bar producer, strategy loop as consumer, replacing the blocking full-file load; the Monte Carlo sampler is index-partitioned parallel-for instead, since a queue has no job where per-path cost is uniform and each path writes exactly one slot.
+- **Statistical Rigor & Regime Awareness:** Trade-level Monte Carlo — percentile distributions over EV, max drawdown and terminal equity; two-state regime classification with a fitted transition matrix (`CalmToCalm`/`CalmToVol`/`VolToCalm`/`VolToVol`); null-ensemble baselines separating signal from luck.
+- **Parallel & GPU Execution:** Index-partitioned writes with per-run seeding across **[C]** cores — serial and parallel samplers agree bit-for-bit under test, **[S]×** speedup; CUDA path generation (cloud T4) at **[N]×** CPU, Nsight-profiled, seeded replay bit-identical across CPU/GPU.
+- **ML Data Pipeline:** Leakage-free point-in-time datasets as memory-mapped Parquet → PyTorch zero-copy via the Arrow C Data Interface → ONNX export → walk-forward evaluation with null-ensemble validation.
 
-**Order Book Matching Engine — C++17** (github.com/jason-deng-dev/Orderbook)
+**Order Book Matching Engine — C++23** (github.com/jason-deng-dev/Orderbook)
 
-- Array-indexed price ladder with PMR-pooled intrusive FIFO queues: O(1) best-quote access and insert/cancel-by-ID; zero hot-path allocations.
-- Replaced std::map with the flat ladder (3.9× throughput, 1.18M → 4.55M msgs/sec) and the order index with a generational slot map (cancel p50 [125→N]ns) — fills bit-identical across rewrites on the 1M-message replay.
-- Benchmarked 12 op paths: p50 add 142ns, cancel 125ns, 3-level sweep 357ns; p99 within ~3% of p50.
-- Zero-alloc feature-computation layer (order-flow imbalance, microprice, queue position) at [X] msgs/sec — feeds the backtester's signal inputs.
-- AF_XDP user-space ingestion at rung [R]: kernel-stack cycles per message [A]→[B], syscalls per message [N]→0, wire-to-book p99.9 [C]ns against NIC hardware timestamps; fills bit-identical to the socket path on the same recorded stream; real ITCH 5.0 message mix replayed through the same harness.
+- **Low-Latency Core:** Price-time priority matching engine in C++23; reverse-ordered contiguous price levels, best price at the back, search policy as a compile-time template parameter; self-trade prevention and partial-fill semantics.
+- **Replay & Validation:** ITCH 5.0 ingestion with sequence-gap detection and a Synced/Recovering resync state machine; post-match apply path (execute/cancel/replace against resting orders) decoupled from the order-entry matching path.
+- **Data Structure Optimization:** Replaced std::map with a reverse-ordered level vector (**[X]×** throughput) and the order index with a generational slot map (cancel p50: **[A→B]**ns); fills bit-identical across rewrites; pooled slab with intrusive FIFO links removes the per-order heap node.
+- **Hot-Path Optimization:** Zero hot-path allocation via a pre-committed slab arena and hand-rolled free-list, verified by interposing malloc/free and operator new/delete; tail attributed with per-op LLC and dTLB miss counts. Benchmarked linear vs binary vs branchless search, located the depth **[D]** crossover where linear wins on hardware prefetching, confirmed via `perf stat` branch-miss and IPC counters.
+- **Correctness:** Replays one capture through every backend, asserting identical book-state hashes plus continuous invariants (uncrossed book, per-level volume conservation, order-index consistency) — caught **[C]** divergences the unit suite missed.
+- **ML Feature Integration:** Zero-alloc microstructure feature layer (order-flow imbalance, microprice, queue position) at **[X]** msgs/sec, feeding the backtester's signal inputs. *— gated on step H.*
+- **Kernel-Bypass Ingestion:** AF_XDP user-space ingestion at rung [R]: kernel-stack cycles per message [A]→[B], syscalls per message [N]→0, wire-to-book p99.9 [C]ns against NIC hardware timestamps; fills bit-identical to the socket path on the same recorded stream; real ITCH 5.0 message mix replayed through the same harness. *— rungs 0–1 need no special hardware.*
 
 **Editing rules:** the skills strip is the FIRST cut under space pressure (bullets carry the keywords). Never submit as "ML engineer" — boundary discipline applies to applications too. Engine-block cut order: correctness line → kernels line → gateway ablation clause. The decoder and scheduler bullets are the block's reason to exist; they go last.
 

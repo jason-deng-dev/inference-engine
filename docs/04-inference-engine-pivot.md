@@ -122,10 +122,11 @@ The master's list is canonical; reproduced here so the two cannot drift.
 2. **Second backend (ONNX Runtime) — cut before any core item**; the decoder backend alone carries the story
 3. Half of Phase 2's experiments (keep NUMA + false sharing; branchless and huge pages are the cut candidates)
 4. Phase 6 rung 2 (chunked prefill) — the scheduler ships at rung 1 with the ladder documented and rung 2 named as designed-but-unbuilt
-5. Phase 6 preemption rungs (recompute/swap)
-6. Load-generator realism (keep one recorded stream + one synthetic flavor)
-7. Snapshot-recovery stretch (already demoted)
-8. Step G's stretch items (sampling variants, GPU path) — and cut A5 (the quantized kernel) before cutting the GEMM ladder
+5. **Phase 6 rung 2b (prefix caching, added 2026-10-10)** — survives compression a little longer than chunked prefill because it is cheaper and it is the more common production feature; the shared-prefix load-generator flavor is cut with it, since without that workload the rung is unmeasurable
+6. Phase 6 preemption rungs (recompute/swap)
+7. Load-generator realism (keep one recorded stream + one synthetic flavor)
+8. Snapshot-recovery stretch (already demoted)
+9. Step G's stretch items (sampling variants, GPU path); then the step-A **Triton comparison** (added 2026-10-10); then cut A5 (the quantized kernel). The GEMM ladder is never cut — the roofline it produces is what the decoder's bandwidth claim rests on
 
 **Never cut:** Phase 0 reading and the SPSC ring; correctness gates (fuzz/TSan/differential/replay); the scheduler correctness gate; ablation; zero-alloc verification.
 

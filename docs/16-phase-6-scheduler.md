@@ -50,7 +50,27 @@
 
 **Learn:** that prefill is compute-bound and decode is bandwidth-bound, and that co-scheduling them is a resource-partitioning problem — the same reasoning as mixing two workloads on one core, which is Phase 0 material applied to a new resource.
 
-**Cut rule:** rung 2 is cut item 3 in the master's order. If time compresses, the scheduler ships at rung 1, the ladder is documented, and rung 2 is named as designed-but-unbuilt. Never claim it unbuilt.
+**Cut rule:** rung 2 is cut item 4 in the master's order. If time compresses, the scheduler ships at rung 1, the ladder is documented, and rung 2 is named as designed-but-unbuilt. Never claim it unbuilt.
+
+---
+
+## Rung 2b — 🔨 Prefix caching (KV reuse across requests) *(added 2026-10-10)*
+
+**Letter, not number, on purpose:** this is an orthogonal axis to the prefill/decode ladder — it reuses work across requests rather than changing how one request's work is scheduled — so it slots in beside rungs 1 and 2 rather than after them, and the existing rung references elsewhere in the plan stay valid.
+
+**📖 Read:** vLLM's prefix-caching and block-hashing documentation, then **SGLang's RadixAttention paper** (Zheng et al., 2023) for the data structure. Read the paper for the *choice*: a radix tree over token sequences rather than a flat map keyed on complete prefixes, and what that buys when prompts share partial prefixes instead of exact ones. Half a day.
+
+**What:** retain the KV blocks of prefixes more than one request has computed, and let a later request that shares a prefix begin decoding from those blocks instead of re-running prefill over them. Today the prefill for a shared system prompt is repeated once per request; this converts that compute into a lookup.
+
+**Why it earns a rung:** it is the standard production feature — every serious serving stack has it — and it is the first point where the KV allocator stops being an allocator and becomes a *cache*, which means ownership stops being exclusive. That is the real change. Rung 1 gives each sequence its own blocks and frees them on completion; rung 2b lets two sequences reference one block, so a block is freed only when its last reference goes.
+
+**Reach for:** block-level hashing — hash a full block's token IDs chained with its parent's hash, so a block's identity encodes its entire prefix; a reference count per block; and the immutability rule that makes sharing safe: a shared block is never written, only the final partial block of a sequence is mutable, so appending allocates a fresh block rather than mutating a shared one. Get that rule wrong and the failure is silent cross-request corruption.
+
+**Measure:** hit rate on a workload with genuinely shared prefixes — which means the load generator needs a shared-prefix flavor, because on distinct prompts the rung's delta is zero and *that* is the finding; TTFT delta on hits against the same workload with caching off; the memory cost of retained blocks and the eviction policy that bounds it (LRU over refcount-zero blocks).
+
+**Learn:** caching as a serving mechanism rather than a memoization trick; why prompt structure — shared system prompts, multi-turn history — decides whether a cache is worth its memory; that introducing a cache changes the ownership model of the thing it caches.
+
+**Cut rule:** cut after chunked prefill and before the preemption rungs. It is cheaper than chunked prefill (no new theory beyond hashing and reference counting) and it is the more common production feature, but the TTFT/TPOT tradeoff is the scheduler's core story and this is an optimization layered on top of it. Never claim it unbuilt.
 
 ---
 
@@ -74,6 +94,7 @@
 - **Differential vs. rung 0.** Fuzzed request sequences (varying prompt lengths, generation lengths, and arrival patterns) through both schedulers; per-request outputs must match exactly. Divergence is a find, not a nuisance.
 - **Admission invariants under fuzz:** resident KV never exceeds budget; every admitted request eventually completes or is explicitly refused; refused requests are refused once, with a reason; no request is admitted twice.
 - **Concurrency edge cases, as fuzz invariants:** a request cancelled by the client mid-generation frees its KV exactly once; a client that disconnects without reading does not block drain; a batch where every request finishes on the same iteration; a single request longer than the budget (must refuse, not hang); arrival exactly at the budget boundary.
+- **Prefix-cache invariants (gated on rung 2b):** a block is freed exactly once, and only at refcount zero; no write ever lands in a shared block; and two requests sharing a prefix produce token-identical output with caching on and off, over the same seeded stream. The last one carries the weight — it is the output-equality gate re-run against the cache, and it is what separates a working cache from one that quietly serves another request's KV.
 - **TSan clean** under concurrent arrivals and completions.
 - **Explain-loop gate (shipping requirement):** cold, spoken, no notes — Orca's iteration-level scheduling and vLLM's paging, why each beats the naive design, and how your design differs and why. This is the feedback substitute the plan cannot otherwise provide.
 
