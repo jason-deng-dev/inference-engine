@@ -5,11 +5,6 @@
   - [x] Preshing's 4 memory-ordering posts
   - [x] McKenney Memory Barrieor c1-4
   - [x] CiA c5
-  - [ ] SPSC Ring
-  - [ ] CiA C6->11b
-  - [ ] OSTEP 33, 29.1, 31
-  - [ ] Inside the Machine (Stokes)
-  - [ ] Dreppler §1-3
-  - [ ] COD
-  - [ ] CSAPP 3.4/3.6/3.7 (with SPSC ring)
-  - [ ] perf stat 
+  - [ ] Tools Work through §14 
+  - [ ] Build measurement harness
+  - [ ] Build false-sharing toy
