@@ -269,7 +269,7 @@ Weighting: ~70% coding/systems, ~20% design + math, ~10% behavioral/domain. Gaps
 - Perf analysis: counters (IPC, branch-misses, cache-misses, dTLB-misses), top-down vocabulary, `rdtsc` vs `clock_gettime`
 - FP: IEEE-754, rounding modes, denormal cliffs, FMA contraction, fast-math dangers, cross-vendor determinism (a **step A** claim, and only the CPU↔GPU half is yours to own; HIP/ROCm is ruled out, so do not carry a cross-*vendor* claim you are not building)
 
-*Coverage: Drepper + COD targeted + Phase 2.*
+*Coverage: Drepper + COD targeted + the CSAPP slice (ch. 3 asm/ABI, ch. 7 linking + interpositioning, 9.9 allocators) + Phase 2.*
 
 ### E. Networking (~10%)
 
